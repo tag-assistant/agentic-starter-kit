@@ -1,0 +1,55 @@
+name: "Agentic Workflow Runner"
+description: "Reusable action for running GitHub Agentic Workflows with configurable agent engines"
+author: "tag-assistant"
+
+branding:
+  icon: "cpu"
+  color: "purple"
+
+inputs:
+  workflow:
+    description: "Name of the agentic workflow to run (without extension)"
+    required: true
+  agent:
+    description: "AI coding agent engine to use"
+    required: false
+    default: "copilot"
+  github-token:
+    description: "GitHub token for API access"
+    required: true
+    default: ${{ github.token }}
+  working-directory:
+    description: "Working directory for the workflow"
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install gh-aw CLI
+      shell: bash
+      run: gh extension install github/gh-aw
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: Build MCP Server (if exists)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f "src/mcp-server/package.json" ]; then
+          cd src/mcp-server && npm ci && npm run build
+        fi
+
+    - name: Run Agentic Workflow
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        gh aw run .github/workflows/${{ inputs.workflow }}.md \
+          --agent ${{ inputs.agent }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}

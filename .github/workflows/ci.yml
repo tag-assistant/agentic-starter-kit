@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build MCP Server
+        working-directory: src/mcp-server
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Validate example workflows
+        run: |
+          echo "Checking example workflow files exist and have frontmatter..."
+          for f in examples/*.md; do
+            echo "✓ $f"
+            head -1 "$f" | grep -q "^---" || (echo "ERROR: $f missing frontmatter" && exit 1)
+          done
+          echo "All example workflows valid!"
+
+      - name: Validate action.yml
+        run: |
+          echo "Checking action.yml..."
+          test -f action.yml && echo "✓ action.yml exists"
+          grep -q "name:" action.yml && echo "✓ Has name field"
+          grep -q "runs:" action.yml && echo "✓ Has runs field"
