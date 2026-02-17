@@ -1,0 +1,92 @@
+name: Agentic Issue Handler
+
+on:
+  issues:
+    types: [opened, reopened, edited]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: src/mcp-server
+        run: npm ci && npm run build
+
+      - name: Triage issue with AI
+        uses: actions/github-script@v7
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        with:
+          script: |
+            const title = process.env.ISSUE_TITLE || '';
+            const body = process.env.ISSUE_BODY || '';
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER);
+
+            // Simple keyword-based triage (replace with your AI agent)
+            const labels = [];
+            const text = `${title} ${body}`.toLowerCase();
+
+            if (text.match(/bug|error|fail|crash|broken/)) labels.push('bug');
+            if (text.match(/feature|request|enhance|add support/)) labels.push('enhancement');
+            if (text.match(/question|how to|help|what is/)) labels.push('question');
+            if (text.match(/doc|readme|typo|spelling/)) labels.push('documentation');
+            if (text.match(/security|vuln|cve|xss|injection/)) labels.push('priority: high');
+
+            if (labels.length === 0) labels.push('needs-triage');
+
+            // Apply labels
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels,
+            });
+
+            // Add triage comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `🤖 **Auto-Triage**\n\nLabels applied: ${labels.map(l => '`' + l + '`').join(', ')}\n\n> This issue was automatically triaged. A maintainer will review shortly.`,
+            });
+
+  respond:
+    if: github.event_name == 'issue_comment' && !github.event.comment.user.bot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Respond to comment
+        uses: actions/github-script@v7
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        with:
+          script: |
+            const comment = process.env.COMMENT_BODY || '';
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER);
+
+            // Only respond if explicitly mentioned
+            if (!comment.includes('@bot') && !comment.includes('/agent')) return;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `🤖 I received your request. Processing...\n\n> Replace this with your AI agent's response using the MCP server tools.`,
+            });

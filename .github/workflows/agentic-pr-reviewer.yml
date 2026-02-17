@@ -1,0 +1,110 @@
+name: Agentic PR Reviewer
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: "!github.event.pull_request.draft"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr.diff
+          echo "lines=$(wc -l < /tmp/pr.diff)" >> "$GITHUB_OUTPUT"
+
+      - name: Review PR with AI
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          DIFF_LINES: ${{ steps.diff.outputs.lines }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER);
+            const title = process.env.PR_TITLE || '';
+            const body = process.env.PR_BODY || '';
+            const diffLines = parseInt(process.env.DIFF_LINES || '0');
+
+            // Get changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const filesSummary = files.map(f =>
+              `- \`${f.filename}\` (+${f.additions}/-${f.deletions})`
+            ).join('\n');
+
+            const reviewChecks = [];
+
+            // Check for large PRs
+            if (diffLines > 500) {
+              reviewChecks.push('⚠️ **Large PR** — Consider breaking this into smaller PRs for easier review.');
+            }
+
+            // Check for missing tests
+            const hasTests = files.some(f => f.filename.match(/\.(test|spec)\.(ts|js|py)/));
+            const hasSourceChanges = files.some(f =>
+              f.filename.match(/^src\//) && !f.filename.match(/\.(test|spec)\./));
+            if (hasSourceChanges && !hasTests) {
+              reviewChecks.push('🧪 **Missing tests** — Source files changed but no test files were modified.');
+            }
+
+            // Check for env/secret files
+            const hasSensitive = files.some(f =>
+              f.filename.match(/\.(env|pem|key|secret)/) || f.filename === '.env');
+            if (hasSensitive) {
+              reviewChecks.push('🔒 **Sensitive files detected** — Please verify no secrets are being committed.');
+            }
+
+            // Check for package-lock changes without package.json
+            const hasLockChange = files.some(f => f.filename === 'package-lock.json');
+            const hasPkgChange = files.some(f => f.filename === 'package.json');
+            if (hasLockChange && !hasPkgChange) {
+              reviewChecks.push('📦 **Lock file changed without package.json** — Was this intentional?');
+            }
+
+            const feedback = reviewChecks.length > 0
+              ? reviewChecks.join('\n\n')
+              : '✅ No automated issues detected.';
+
+            // Post review comment
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              event: 'COMMENT',
+              body: [
+                `## 🤖 Automated PR Review`,
+                '',
+                `**${title}**`,
+                '',
+                `### Changed Files (${files.length})`,
+                filesSummary,
+                '',
+                `### Review Notes`,
+                feedback,
+                '',
+                '---',
+                `> Replace this basic analysis with your AI agent for deeper code review. See the [MCP server example](../src/mcp-server/) for tools.`,
+              ].join('\n'),
+            });
